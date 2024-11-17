@@ -1,0 +1,902 @@
+---
+title: "Final Project - Freddie"
+author: "Freddie Kiessling"
+date: "2023-12-05"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# load libraries
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(tidyr)
+library(corrplot)
+```
+
+```{r}
+# load datasets
+orig_train = read.csv("/Users/freddiekiessling/Downloads/train.csv")
+orig_test = read.csv("/Users/freddiekiessling/Downloads/test.csv")
+train = read.csv("/Users/freddiekiessling/Downloads/train.csv")
+test = read.csv("/Users/freddiekiessling/Downloads/test.csv")
+```
+
+```{r}
+print(colnames(train))
+```
+
+
+
+
+
+# Data Cleaning/Pre-processing
+
+As one of our goals is determining most significant predictors (not necessarily determining predicting the sale price of the home), in the data cleaning section I will be removing/combining many of the minor variables in order to help simplify the data set.
+
+```{r}
+# removing id column as irrelevant
+train = train[,-1]
+```
+
+```{r}
+# counting missing values
+missing =  sapply(train, function(x) {
+  sum(is.na(x)) / length(x) * 100
+})
+missing_df = data.frame(Missing_Percentages = missing)
+missing_df = missing_df %>%
+  arrange(desc(Missing_Percentages))
+missing_df = missing_df[missing_df$Missing_Percentages > 0, , drop = F]
+missing_df # percentage of columns with NA values
+```
+
+### Dealing with Numerical Variables
+
+```{r}
+# Convert character ratings to numerical, used in many variables
+rating_to_score <- function(rating) {
+  if (is.na(rating)) {
+    return(0)
+  } else {
+    scores <- c(Ex = 5, Gd = 4, TA = 3, Fa = 2, Po = 1)
+    return(scores[rating])
+  }
+}
+```
+
+```{r}
+# Variables leaving as is: MSSubClass, LotArea, OverallQual, OverallCond, TotalBsmtSF, BedroomAbvGr, KitchenAbvGr, TotRmsAbvGrd, Fireplaces, GarageCars, GarageArea
+```
+
+```{r}
+# Pool
+# Add variable to check for pool or not due to large amount of missing values
+train$HasPool <- ifelse(train$PoolArea > 0 | !is.na(train$PoolQC), 1, 0)
+
+# Removing others due to missing variables
+train$PoolArea <- NULL
+train$PoolQC <- NULL
+``` 
+
+```{r}
+# LotFrontage
+# Due to unknown meaning of NA, removing:
+train$LotFrontage <- NULL
+```
+
+```{r}
+# Date variables
+# Not needed
+train$MoSold <- NULL
+
+# Age of house when sold
+train$AgeAtSale <- train$YrSold - train$YearBuilt
+
+# Age since last remodel when sold
+train$YearsSinceRemodel <- train$YrSold - train$YearRemodAdd
+
+# Removing due to some missing values
+train$GarageYrBlt = NULL
+```
+
+```{r}
+# Masonry Veneer Area
+train$MasVnrArea[is.na(train$MasVnrArea)] <- 0
+```
+
+```{r}
+# Basement Square Footage and Above Grade Square Footage
+
+# Only keeping total square feet for basement
+train$BsmtUnfSF = NULL
+train$BsmtFinSF1 = NULL
+train$BsmtFinSF2 =NULL
+
+# Only keeping low quality square feet and total for above grade
+train$X1stFlrSF = NULL
+train$X2ndFlrSF = NULL
+```
+
+```{r}
+# Basement Bathrooms, combining into one variable
+train$BsmtBaths <- train$BsmtFullBath + train$BsmtHalfBath * 0.5
+train$BsmtFullBath <- NULL
+train$BsmtHalfBath <- NULL
+```
+
+```{r}
+# Above grade bathrooms, also combining
+train$TotalBaths <- train$FullBath + train$HalfBath * 0.5
+train$FullBath <- NULL
+train$HalfBath <- NULL
+```
+
+```{r}
+# Outside square footage
+# Combining all into one variable
+train$TotalOutSideSF = train$WoodDeckSF + train$OpenPorchSF + train$EnclosedPorch + train$X3SsnPorch + train$ScreenPorch
+
+train$WoodDeckSF = NULL
+train$OpenPorchSF = NULL
+train$EnclosedPorch = NULL
+train$X3SsnPorch = NULL
+train$ScreenPorch = NULL
+```
+
+### Dealing with Categorical Variables
+
+```{r}
+# MSZoning
+price <- summarize(group_by(train, MSZoning),
+          mean(SalePrice, na.rm=T))
+zone_mapping <- c("FV" = 5, "RL" = 4, "RM" = 3, "RH" = 2, "C (all)" = 1)
+train <- train %>%
+  mutate(MSZoning = zone_mapping[MSZoning])
+```
+
+```{r}
+summarize(group_by(train, Street),
+          mean(SalePrice, na.rm=T))
+# Street, changed to 1 if paved, 0 if not
+train$Street <- ifelse(train$Street == "Pave", 1, 0)
+
+summarize(group_by(train, Alley),
+          mean(SalePrice, na.rm=T))
+# Alley, 1 if alley access, 0 if not
+train$Alley <- ifelse(is.na(train$Alley), 0, 1)
+```
+
+```{r}
+# Lot Variables
+summarize(group_by(train, LotConfig),
+          mean(SalePrice, na.rm=T))
+# 1 for sale price > $200000, 0 for < $200000
+train$LotConfig = ifelse(train$LotConfig %in% c("CulDSac", "FR3"), 1, 0)
+
+# Regular or not
+train$LotShape <- ifelse(train$LotShape == "Reg", 1, 0)
+
+# Flat or not
+train$isFlat <- ifelse(train$LandContour == "Lvl", 1, 0)
+train$LandContour <- NULL
+```
+
+```{r}
+# Utilities, 1 for has everything, 0 for missing something
+summarize(group_by(train, Utilities),
+          mean(SalePrice, na.rm=T))
+train$Utilities <- ifelse(train$Utilities == "AllPub", 1, 0)
+train$Utilities <- NULL
+
+# Electricity, excluding due to unknown variable meanings
+train$Electrical = NULL
+```
+
+```{r}
+# Land Slope
+summarize(group_by(train, LandSlope),
+          mean(SalePrice, na.rm=T))
+# unexpected correlation, will keep all separate
+slopes_mapping <- c("Gtl" = 1, "Mod" = 2, "Sev" = 3)
+train <- train %>%
+  mutate(LandSlope = slopes_mapping[LandSlope])
+```
+
+```{r}
+# Neighborhoods
+
+# Sorting by average sale price by neighborhood
+average_prices <- train %>%
+  group_by(Neighborhood) %>%
+  summarize(AveragePrice = mean(SalePrice, na.rm = TRUE)) %>%
+  ungroup() 
+
+# Splitting into 3 classes, upper, middle, lower
+quantiles <- quantile(average_prices$AveragePrice, probs = c(0.33, 0.66))
+
+train <- train %>%
+  left_join(average_prices, by = "Neighborhood")
+
+train$NeighborhoodClass <- ifelse(
+  train$AveragePrice <= quantiles[1], 1,  # Lower Priced Neighborhoods
+  ifelse(train$AveragePrice > quantiles[1] & train$AveragePrice <= quantiles[2], 2, 3)  # Middle or Upper Priced Neighborhoods
+)
+
+train$AveragePrice <- NULL
+train$Neighborhood <- NULL
+```
+
+```{r}
+# Condition Proximity
+summarize(group_by(train, Condition1),
+          mean(SalePrice, na.rm=T))
+
+train$NearPositiveFeature1 <- ifelse(train$Condition1 %in% c("PosA", "PosN"), 1, 0)
+train$NearPositiveFeature2 <- ifelse(train$Condition1 %in% c("PosA", "PosN"), 1, 0)
+
+train$NearRailroad1 <- ifelse(train$Condition1 %in% c("RRNn", "RRAn", "RRNe", "RRAe"), 1, 0)
+train$NearRailroad2 <- ifelse(train$Condition1 %in% c("RRNn", "RRAn", "RRNe", "RRAe"), 1, 0)
+
+train$Condition1 <- NULL
+train$Condition2 <- NULL
+```
+
+```{r}
+# Building Type
+summarize(group_by(train, BldgType),
+          mean(SalePrice, na.rm=T))
+
+# Combining townhouse and spltting into 4 different binary variables
+train$One_family_building <- ifelse(train$BldgType == "1Fam", 1, 0)
+train$Two_family_conversion <- ifelse(train$BldgType == "2fmCon", 1, 0)
+train$Duplex <- ifelse(train$BldgType == "Duplex", 1, 0)
+train$Townhouse <- ifelse(train$BldgType %in% c("TwnhsE", "Twnhs"), 1, 0)
+
+train$BldgType <- NULL
+```
+
+```{r}
+# House Style
+summarize(group_by(train, HouseStyle),
+          mean(SalePrice, na.rm=T))
+
+train$Split_style <- ifelse(train$HouseStyle %in% c("SLvl", "SFoyer"), 1, 0) 
+train$Less_than_two_story <- ifelse(train$HouseStyle %in% c("1Story", "1.5Fin", "1.5Unf"), 1, 0)
+train$Two_story_plus <- ifelse(train$HouseStyle %in% c("2Story", "2.5Fin", "2.5Unf"), 1, 0)
+
+train$HouseStyle <- NULL
+```
+
+
+
+```{r}
+# Roof + Exterior + Masonry Veneer + Foundation
+summarize(group_by(train, RoofStyle),
+          mean(SalePrice, na.rm=T))
+# I'm going to leave these out of the data set as I don't know what exactly all these are and can't classify as binary
+train$RoofStyle <- NULL
+
+summarize(group_by(train, RoofMatl),
+          mean(SalePrice, na.rm=T))
+
+train$RoofMatl <- NULL
+
+# Same with Exterior + Foundation
+train$Exterior1st <- NULL
+train$Exterior2nd <- NULL
+train$Foundation <- NULL
+
+# Changing exterior condition and quality to numeric
+train$ExterQual <- sapply(train$ExterQual, rating_to_score)
+train$ExterCond <- sapply(train$ExterCond, rating_to_score)
+
+summarize(group_by(train, MasVnrType),
+          mean(SalePrice, na.rm=T))
+
+train$hasMasVnr <- ifelse(is.na(train$MasVnrType), 0, 1)
+
+train$MasVnrType <- NULL
+
+```
+
+```{r}
+# Basement
+train$BsmtQualScore <- sapply(train$BsmtQual, rating_to_score)
+train$BsmtCondScore <- sapply(train$BsmtCond, rating_to_score)
+
+train$BsmtQual <- NULL
+train$BsmtCond <- NULL
+
+# Exposure
+train$BsmtExposure[train$BsmtExposure == "Gd"] <- 3
+train$BsmtExposure[train$BsmtExposure == "Av"] <- 2
+train$BsmtExposure[train$BsmtExposure == "Mn"] <- 1
+train$BsmtExposure[train$BsmtExposure == "No"] <- 0
+train$BsmtExposure[is.na(train$BsmtExposure)] <- 0
+
+# Finished Types
+train$BsmtFinType1[train$BsmtFinType1 %in% c("GLQ", "ALQ", "Rec")] <- 1 
+train$BsmtFinType1[!train$BsmtFinType1 %in% c("GLQ", "ALQ", "Rec")] <- 0
+
+train$BsmtFinType2[train$BsmtFinType2 %in% c("GLQ", "ALQ", "Rec")] <- 1 
+train$BsmtFinType2[!train$BsmtFinType2 %in% c("GLQ", "ALQ", "Rec")] <- 0
+```
+
+```{r}
+# Heating + CentralAir
+# Leaving out heating types as unsure of quality
+train$Heating <- NULL
+
+# Changing quality to numeric
+train$HeatingQC <- sapply(train$HeatingQC, rating_to_score)
+train$HeatingQC <- NULL
+
+# Converting to binary
+train$CentralAir <- ifelse(train$CentralAir == "Y", 1, 0)
+```
+
+```{r}
+# Kitchen 
+# Changing quality to numeric
+train$KitchenQual <- sapply(train$KitchenQual, rating_to_score)
+```
+
+```{r}
+# Functionality
+# Due to unclear guidelines, leaving this out
+train$Function <- NULL
+```
+
+```{r}
+# Fireplaces
+# Changing quality to numeric
+train$FireplaceQu <- sapply(train$FireplaceQu, rating_to_score)
+```
+
+```{r}
+# Garage
+train$GarageQual <- sapply(train$GarageQual, rating_to_score)
+train$GarageCond <- sapply(train$GarageCond, rating_to_score)
+train$HasGarage <- ifelse(is.na(train$GarageType), 0, 1)  
+
+train$GarageType <- NULL
+train$GarageFinish <- NULL
+```
+
+```{r}
+# Paved driveway
+train$PavedDrive[train$PavedDrive == "Y"] <- 1
+train$PavedDrive[!train$PavedDrive != "Y"] <- 0
+train$PavedDrive[is.na(train$PavedDrive)] <- 0
+```
+
+```{r}
+# Fence 
+train$Fence[train$Fence %in% c("GdPrv", "MnPrv", "GdWo","MnWw")] <- 1
+train$Fence[is.na(train$Fence)] <- 0
+```
+
+```{r}
+# MiscFeature and MiscVal variables
+# Average value of miscellaneous feature
+mean(train$MiscVal[train$MiscVal != 0])
+
+# Due to the value being relatively modest compared to the average final sale price of the home, we will exclude it
+train$MiscFeature <- NULL
+train$MiscVal <- NULL
+```
+
+```{r}
+# Sale Type + Sale Condition
+# Unsure of quality of each type, excluding
+train$SaleType = NULL
+train$SaleCondition = NULL
+```
+
+Done with pre-processing
+
+```{r}
+# Double checking for missing values
+missing =  sapply(train, function(x) {
+  sum(is.na(x)) / length(x) * 100
+})
+missing_df = data.frame(Missing_Percentages = missing)
+missing_df = missing_df %>%
+  arrange(desc(Missing_Percentages))
+missing_df = missing_df[missing_df$Missing_Percentages > 0, , drop = F]
+missing_df # percentage of columns with NA values
+```
+
+```{r}
+# Correlation Matrix for numeric variables
+numeric_vars <- sapply(train, is.numeric)
+cor_matrix <- cor(train[, numeric_vars], use = "pairwise.complete.obs")
+
+corrplot(cor_matrix, method = "square",
+         tl.cex = 0.5, 
+         tl.srt = 90,  
+         addrect = 5)
+```
+
+```{r}
+# Correlation Matrix using all original data for reference (delete later)
+numeric_vars <- sapply(orig_train, is.numeric)
+cor_matrix <- cor(orig_train[, numeric_vars], use = "pairwise.complete.obs")
+
+corrplot(cor_matrix, method = "square",
+         tl.cex = 0.5, 
+         tl.srt = 45,  
+         addrect = 5)
+```
+
+As we made many changes to the training data all the steps must also be applied to the test data:
+
+```{r}
+# removing id column as irrelevant
+test = test[,-1]
+```
+
+Dealing with Numerical Variables
+
+```{r}
+# Variables leaving as is: MSSubClass, LotArea, OverallQual, OverallCond, TotalBsmtSF, BedroomAbvGr, KitchenAbvGr, TotRmsAbvGrd, Fireplaces, GarageCars, GarageArea
+```
+
+```{r}
+# Pool
+# Add variable to check for pool or not due to large amount of missing values
+test$HasPool <- ifelse(test$PoolArea > 0 | !is.na(test$PoolQC), 1, 0)
+
+# Removing others due to missing variables
+test$PoolArea <- NULL
+test$PoolQC <- NULL
+``` 
+
+```{r}
+# LotFrontage
+# Due to unknown meaning of NA, removing:
+test$LotFrontage <- NULL
+```
+
+```{r}
+# Date variables
+# Not needed
+test$MoSold <- NULL
+
+# Age of house when sold
+test$AgeAtSale <- test$YrSold - test$YearBuilt
+
+# Age since last remodel when sold
+test$YearsSinceRemodel <- test$YrSold - test$YearRemodAdd
+
+# Removing due to some missing values
+test$GarageYrBlt = NULL
+```
+
+```{r}
+# Masonry Veneer Area
+test$MasVnrArea[is.na(test$MasVnrArea)] <- 0
+```
+
+```{r}
+# Basement Square Footage and Above Grade Square Footage
+
+# Only keeping total square feet for basement
+test$BsmtUnfSF = NULL
+test$BsmtFinSF1 = NULL
+test$BsmtFinSF2 =NULL
+
+# Only keeping low quality square feet and total for above grade
+test$X1stFlrSF = NULL
+test$X2ndFlrSF = NULL
+```
+
+```{r}
+# Basement Bathrooms, combining into one variable
+test$BsmtBaths <- test$BsmtFullBath + test$BsmtHalfBath * 0.5
+test$BsmtFullBath <- NULL
+test$BsmtHalfBath <- NULL
+```
+
+```{r}
+# Above grade bathrooms, also combining
+test$TotalBaths <- test$FullBath + test$HalfBath * 0.5
+test$FullBath <- NULL
+test$HalfBath <- NULL
+```
+
+```{r}
+# Outside square footage
+# Combining all into one variable
+test$TotalOutSideSF = test$WoodDeckSF + test$OpenPorchSF + test$EnclosedPorch + test$X3SsnPorch + test$ScreenPorch
+
+test$WoodDeckSF = NULL
+test$OpenPorchSF = NULL
+test$EnclosedPorch = NULL
+test$X3SsnPorch = NULL
+test$ScreenPorch = NULL
+```
+
+Dealing with Categorical Variables
+```{r}
+# MSZoning
+zone_mapping <- c("FV" = 5, "RL" = 4, "RM" = 3, "RH" = 2, "C (all)" = 1)
+test <- test %>%
+  mutate(MSZoning = zone_mapping[MSZoning])
+```
+
+```{r}
+# Street, changed to 1 if paved, 0 if not
+test$Street <- ifelse(test$Street == "Pave", 1, 0)
+
+# Alley, 1 if alley access, 0 if not
+test$Alley <- ifelse(is.na(test$Alley), 0, 1)
+```
+
+```{r}
+# Lot Variables
+# 1 for sale price > $200000, 0 for < $200000
+test$LotConfig = ifelse(test$LotConfig %in% c("CulDSac", "FR3"), 1, 0)
+
+# Regular or not
+test$LotShape <- ifelse(test$LotShape == "Reg", 1, 0)
+
+# Flat or not
+test$isFlat <- ifelse(test$LandContour == "Lvl", 1, 0)
+test$LandContour <- NULL
+```
+
+```{r}
+# Utilities, 1 for has everything, 0 for missing something
+test$Utilities <- ifelse(test$Utilities == "AllPub", 1, 0)
+test$Utilities <- NULL
+
+# Electricity, excluding due to unknown variable meanings
+test$Electrical = NULL
+```
+
+```{r}
+# Land Slope
+# unexpected correlation, will keep all separate
+slopes_mapping <- c("Gtl" = 1, "Mod" = 2, "Sev" = 3)
+test <- test %>%
+  mutate(LandSlope = slopes_mapping[LandSlope])
+```
+
+```{r}
+# Neighborhoods
+test$NeighborhoodClass <- ifelse(test$Neighborhood %in% c("NoRidge", "NridgHt", "StoneBr", "Timber", "Veenker"), 3, 
+                                 ifelse(test$Neighborhood %in% c("ClearCr", "CollgCr", "Crawfor", "Somerst", "Gilbert", "NWAmes"), 2, 
+                                        1))
+
+test$Neighborhood <- NULL
+```
+
+```{r}
+# Condition Proximity
+test$NearPositiveFeature1 <- ifelse(test$Condition1 %in% c("PosA", "PosN"), 1, 0)
+test$NearPositiveFeature2 <- ifelse(test$Condition1 %in% c("PosA", "PosN"), 1, 0)
+
+test$NearRailroad1 <- ifelse(test$Condition1 %in% c("RRNn", "RRAn", "RRNe", "RRAe"), 1, 0)
+test$NearRailroad2 <- ifelse(test$Condition1 %in% c("RRNn", "RRAn", "RRNe", "RRAe"), 1, 0)
+
+test$Condition1 <- NULL
+test$Condition2 <- NULL
+```
+
+```{r}
+# Building Type
+# Combining townhouse and spltting into 4 different binary variables
+test$One_family_building <- ifelse(test$BldgType == "1Fam", 1, 0)
+test$Two_family_conversion <- ifelse(test$BldgType == "2fmCon", 1, 0)
+test$Duplex <- ifelse(test$BldgType == "Duplex", 1, 0)
+test$Townhouse <- ifelse(test$BldgType %in% c("TwnhsE", "Twnhs"), 1, 0)
+
+test$BldgType <- NULL
+```
+
+```{r}
+# House Style
+test$Split_style <- ifelse(test$HouseStyle %in% c("SLvl", "SFoyer"), 1, 0) 
+test$Less_than_two_story <- ifelse(test$HouseStyle %in% c("1Story", "1.5Fin", "1.5Unf"), 1, 0)
+test$Two_story_plus <- ifelse(test$HouseStyle %in% c("2Story", "2.5Fin", "2.5Unf"), 1, 0)
+
+test$HouseStyle <- NULL
+```
+
+```{r}
+# Roof + Exterior + Masonry Veneer + Foundation
+# I'm going to leave these out of the data set as I don't know what exactly all these are and can't classify as binary
+test$RoofStyle <- NULL
+test$RoofMatl <- NULL
+
+# Same with Exterior + Foundation
+test$Exterior1st <- NULL
+test$Exterior2nd <- NULL
+test$Foundation <- NULL
+
+# Changing exterior condition and quality to numeric
+test$ExterQual <- sapply(test$ExterQual, rating_to_score)
+test$ExterCond <- sapply(test$ExterCond, rating_to_score)
+
+test$hasMasVnr <- ifelse(is.na(test$MasVnrType), 0, 1)
+
+test$MasVnrType <- NULL
+
+```
+
+```{r}
+# Basement
+test$BsmtQualScore <- sapply(test$BsmtQual, rating_to_score)
+test$BsmtCondScore <- sapply(test$BsmtCond, rating_to_score)
+
+test$BsmtQual <- NULL
+test$BsmtCond <- NULL
+
+# Exposure
+test$BsmtExposure[test$BsmtExposure == "Gd"] <- 3
+test$BsmtExposure[test$BsmtExposure == "Av"] <- 2
+test$BsmtExposure[test$BsmtExposure == "Mn"] <- 1
+test$BsmtExposure[test$BsmtExposure == "No"] <- 0
+test$BsmtExposure[is.na(test$BsmtExposure)] <- 0
+
+# Finished Types
+test$BsmtFinType1[test$BsmtFinType1 %in% c("GLQ", "ALQ", "Rec")] <- 1 
+test$BsmtFinType1[!test$BsmtFinType1 %in% c("GLQ", "ALQ", "Rec")] <- 0
+
+test$BsmtFinType2[test$BsmtFinType2 %in% c("GLQ", "ALQ", "Rec")] <- 1 
+test$BsmtFinType2[!test$BsmtFinType2 %in% c("GLQ", "ALQ", "Rec")] <- 0
+```
+
+```{r}
+# Heating + CentralAir
+# Leaving out heating types as unsure of quality
+test$Heating <- NULL
+
+# Changing quality to numeric
+test$HeatingQC <- sapply(test$HeatingQC, rating_to_score)
+test$HeatingQC <- NULL
+
+# Converting to binary
+test$CentralAir <- ifelse(test$CentralAir == "Y", 1, 0)
+```
+
+```{r}
+# Kitchen 
+# Changing quality to numeric
+test$KitchenQual <- sapply(test$KitchenQual, rating_to_score)
+```
+
+```{r}
+# Functionality
+# Due to unclear guidelines, leaving this out
+test$Function <- NULL
+```
+
+```{r}
+# Fireplaces
+# Changing quality to numeric
+test$FireplaceQu <- sapply(test$FireplaceQu, rating_to_score)
+```
+
+```{r}
+# Garage
+test$GarageQual <- sapply(test$GarageQual, rating_to_score)
+test$GarageCond <- sapply(test$GarageCond, rating_to_score)
+test$HasGarage <- ifelse(is.na(test$GarageType), 0, 1)  
+
+test$GarageType <- NULL
+test$GarageFinish <- NULL
+```
+
+```{r}
+# Paved driveway
+test$PavedDrive[test$PavedDrive == "Y"] <- 1
+test$PavedDrive[!test$PavedDrive != "Y"] <- 0
+test$PavedDrive[is.na(test$PavedDrive)] <- 0
+```
+
+```{r}
+# Fence 
+test$Fence[test$Fence %in% c("GdPrv", "MnPrv", "GdWo","MnWw")] <- 1
+test$Fence[is.na(test$Fence)] <- 0
+```
+
+```{r}
+# MiscFeature and MiscVal variables
+
+# Due to the value being relatively modest compared to the average final sale price of the home, we will exclude it
+test$MiscFeature <- NULL
+test$MiscVal <- NULL
+```
+
+```{r}
+# Sale Type + Sale Condition
+# Unsure of quality of each type, excluding
+test$SaleType = NULL
+test$SaleCondition = NULL
+```
+
+
+Hubert's code starts here:
+
+
+
+
+
+```{r}
+# visualizations
+
+# 5 individual plots based on columns w/ highest correlation
+
+boxplot1 <- ggplot(train, aes(x = as.factor(OverallQual), y = SalePrice)) + 
+            geom_boxplot() + 
+            ggtitle("Boxplot - Overall Quality vs Sale Price") +
+            xlab("Overall Quality") +
+            ylab("Sale Price")
+plot2 <- ggplot(train, aes(x = GrLivArea, y = SalePrice)) + geom_point() + ggtitle("Plot 2")
+boxplot3 <- ggplot(train, aes(x = as.factor(GarageCars), y = SalePrice)) + 
+            geom_boxplot() + 
+            ggtitle("Boxplot - Garage Cars vs Sale Price") +
+            xlab("Garage Cars") +
+            ylab("Sale Price")
+
+plot4 <- ggplot(train, aes(x = GarageArea, y = SalePrice)) + geom_point() + ggtitle("Plot 4")
+plot5 <- ggplot(train, aes(x = TotalBsmtSF, y = SalePrice)) + geom_point() + ggtitle("Plot 5")
+
+
+
+
+
+plot_list = list(boxplot1, plot2, boxplot3, plot4, plot5)
+
+
+for (plot in plot_list) {
+    print(plot)
+}
+```
+
+12 Highest predictors
+```{r}
+correlations <- cor(train[sapply(train, is.numeric)], train$SalePrice)
+sorted_correlations <- sort(abs(correlations[,1]), decreasing = TRUE)
+top_12_predictors <- names(sorted_correlations)[2:13]
+
+print(top_12_predictors)
+sorted_correlations[1:13]
+
+```
+
+We chose to apply a Forward Selection algorithm to find the best multiple linear regression model based on the highest correlation predictors to Sale Price (Y). We could have also used Backward elimination or stepwise, but we decided it would be too computationally intensive due to our large number of predictors. Thus, we started with a base model, and applied a forward selection to add predictors. 
+
+```{r}
+base_model <- lm(SalePrice ~ 1, data = train)
+library(MASS)
+best_model <- stepAIC(base_model, scope = list(lower = base_model, upper = ~ OverallQual + GrLivArea + ExterQual + KitchenQual + GarageCars + GarageArea + TotalBsmtSF), direction = "forward")
+```
+
+
+K-fold CV (10 Folds): 
+```{r}
+library(caret)
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+
+
+model1_formula <- SalePrice ~ OverallQual + GrLivArea + KitchenQual + GarageCars + TotalBsmtSF + ExterQual
+model2_formula <- SalePrice ~ OverallQual + GrLivArea + KitchenQual + GarageCars + TotalBsmtSF
+model3_formula <- SalePrice ~ OverallQual + GrLivArea + KitchenQual + GarageCars
+
+
+set.seed(123)  # For reproducibility
+model1_cv <- train(model1_formula, data = train, method = "lm", trControl = fitControl)
+
+set.seed(123)
+model2_cv <- train(model2_formula, data = train, method = "lm", trControl = fitControl)
+
+set.seed(123)
+model3_cv <- train(model3_formula, data = train, method = "lm", trControl = fitControl)
+
+model1_cv$results
+model2_cv$results
+model3_cv$results
+
+```
+
+
+
+Diagnostics:
+
+
+```{r}
+model1 <- lm(model1_formula, data = train)
+
+# Residuals vs Fitted Values
+plot(model1$fitted.values, residuals(model1), 
+     xlab = "Fitted Values", 
+     ylab = "Residuals", 
+     main = "Residuals vs Fitted Values")
+abline(h = 0, col = "red")
+
+# Normal Q-Q Plot
+qqnorm(residuals(model1))
+qqline(residuals(model1), col = "red")
+
+
+# Shapiro-Wilk Test
+shapiro.test(residuals(model1))
+
+# install.packages("lmtest")
+library(lmtest)
+
+# Breusch-Pagan Test
+bptest(model1)
+
+# install.packages("lmtest")
+library(lmtest)
+
+# Breusch-Pagan Test
+bptest(model1)
+
+# install.packages("car")
+library(car)
+
+# Variance Inflation Factor
+vif(model1)
+
+# install.packages("car")
+library(car)
+
+# Plot for Outliers and Leverage
+influencePlot(model1, id.method = "identify", main = "Influence Plot", sub = "Circle size is proportional to Cook's distance")
+
+
+```
+
+
+
+
+```{r}
+print(colnames(train))
+
+```
+
+
+Logistic Regression: utilizing backward elimination.
+
+
+```{r}
+
+```
+
+
+
+```{r}
+
+# Categorizing Sale Price into High and Low based on the median
+median_price <- median(train$SalePrice)
+train$PriceCategory <- ifelse(train$SalePrice > median_price, "High", "Low")
+train$PriceCategoryBinary <- ifelse(train$PriceCategory == "High", 1, 0)
+
+# Assuming you have already loaded the MASS package for stepAIC
+library(MASS)
+
+# Fit the full logistic regression model with all the specified predictors
+full_log_model <- glm(PriceCategoryBinary ~ OverallQual + GrLivArea + ExterQual + KitchenQual + GarageCars + GarageArea + TotalBsmtSF + Neighborhood + TotalBaths + BsmtQualScore + TotRmsAbvGrd + AgeAtSale, data = train, family = binomial)
+
+# Apply backward elimination to find the most optimal model
+optimal_log_model <- stepAIC(full_log_model, direction = "backward")
+
+# View the summary of the optimal model
+summary(optimal_log_model)
+
+
+```
+
+
+
